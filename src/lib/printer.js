@@ -78,18 +78,24 @@ function buildEncoder() {
 
 const COLUMNS = [
   { width: 4, align: 'center' },
-  { width: 22, align: 'center' },
-  { width: 6, align: 'center' },
-  { width: 16, align: 'center' },
+  { width: 19, align: 'center' },
+  { width: 5, align: 'center' },
+  { width: 14, align: 'center' },
 ];
 const TOTALS_COLUMNS = [
-  { width: 30, align: 'center' },
-  { width: 18, align: 'center' },
+  { width: 24, align: 'center' },
+  { width: 16, align: 'center' },
 ];
 const KITCHEN_COLUMNS = [
-  { width: 3, align: 'center' },
-  { width: 21, align: 'left' },
+  { width: 4, align: 'left' },
+  { width: 22, align: 'left' },
+  { width: 6, align: 'right' },
 ];
+
+function fit(text, width) {
+  const s = String(text ?? '');
+  return s.length > width ? `${s.slice(0, Math.max(0, width - 3))}...` : s;
+}
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -137,15 +143,21 @@ export async function printKitchenTicketDirect(order) {
     .rule({ style: 'double' })
     .newline();
 
+  // Serial number, item name, and quantity each get their own column so
+  // they can't be misread as one run of digits (e.g. "1. 2x Burger").
   order.items.forEach((item, idx) => {
     encoder
       .size(2, 1)
       .bold(true)
-      .table(KITCHEN_COLUMNS, [[`${idx + 1}`, `${item.quantity}x ${item.name}`]])
+      .table(KITCHEN_COLUMNS, [[
+        fit(`${idx + 1}.`, 4),
+        fit(item.name, 22),
+        fit(`x${item.quantity}`, 6),
+      ]])
       .bold(false)
       .size(1, 1);
     if (item.notes) {
-      encoder.line(`   + ${item.notes}`);
+      encoder.line(`   + ${fit(item.notes, 37)}`);
     }
   });
 
@@ -164,6 +176,7 @@ export async function printBillReceiptDirect(order, taxRate) {
   const memberDiscount = order.discountAmount || 0;
   const totalDiscount = productDiscount + memberDiscount;
   const deliveryFee = order.deliveryFee || 0;
+  const extraCharges = order.extraCharges || 0;
   const tax = Number(((chargedSubtotal - memberDiscount) * taxRate).toFixed(2));
 
   const isRiderOrder = order.source === 'Online' || order.orderType === 'Delivery';
@@ -219,9 +232,9 @@ export async function printBillReceiptDirect(order, taxRate) {
     .rule({ style: 'single' });
 
   order.items.forEach((item, idx) => {
-    encoder.table(COLUMNS, [[`${idx + 1}`, item.name, `${item.quantity}`, formatCurrency(item.unitPrice * item.quantity)]]);
+    encoder.table(COLUMNS, [[`${idx + 1}`, fit(item.name, 19), `${item.quantity}`, fit(formatCurrency(item.unitPrice * item.quantity), 14)]]);
     if (item.notes) {
-      encoder.align('left').line(`    ${item.notes}`).align('center');
+      encoder.align('left').line(`    ${fit(item.notes, 38)}`).align('center');
     }
   });
 
@@ -229,17 +242,19 @@ export async function printBillReceiptDirect(order, taxRate) {
   if (productDiscount > 0) totalsRows.push(['Product Discount', `-${formatCurrency(productDiscount)}`]);
   if (memberDiscount > 0) totalsRows.push(['Member Discount', `-${formatCurrency(memberDiscount)}`]);
   if (deliveryFee > 0) totalsRows.push(['Delivery Fee', formatCurrency(deliveryFee)]);
+  if (extraCharges > 0) totalsRows.push(['Extra Charges', formatCurrency(extraCharges)]);
   totalsRows.push([`Tax (${(taxRate * 100).toFixed(1)}%)`, formatCurrency(tax)]);
 
   encoder
     .rule({ style: 'single' })
     .table(TOTALS_COLUMNS, totalsRows)
     .rule({ style: 'double' })
-    .size(2, 2)
     .bold(true)
-    .table(TOTALS_COLUMNS, [['TOTAL', formatCurrency(order.totalAmount)]])
-    .bold(false)
-    .size(1, 1);
+    .size(2, 2)
+    .line('TOTAL')
+    .line(fit(formatCurrency(order.totalAmount), 19))
+    .size(1, 1)
+    .bold(false);
 
   if (totalDiscount > 0) {
     encoder.bold(true).table(TOTALS_COLUMNS, [['You Saved', formatCurrency(totalDiscount)]]).bold(false);

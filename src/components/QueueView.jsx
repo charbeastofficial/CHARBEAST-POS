@@ -37,7 +37,7 @@ export default function QueueView({ orders, flashingOrders, onSelectOrder }) {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-display text-sm font-bold text-cream">#{order.id.slice(-6).toUpperCase()}</span>
-                    <StatusPill status={order.status} />
+                    <StatusPill status={order.status} isPaid={order.isPaid} />
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-semibold text-cream">{order.customerName}</span>

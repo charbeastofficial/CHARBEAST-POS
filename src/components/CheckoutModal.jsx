@@ -17,7 +17,11 @@ export default function CheckoutModal({
   setTableNumber,
   ticketSubtotal,
   ticketDeliveryFee,
+  onChangeDeliveryFee,
   ticketDiscountAmount,
+  onChangeDiscount,
+  ticketExtraCharges,
+  onChangeExtraCharges,
   ticketTotal,
   memberDiscountPercent,
   isMemberOrder,
@@ -153,16 +157,75 @@ export default function CheckoutModal({
             </button>
           </div>
 
+          {/* MANUAL DISCOUNT + DELIVERY FEE -- editable at checkout, before the order even exists */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-cream">Discount Amount</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-text-muted">Rs</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="10"
+                  value={ticketDiscountAmount ? Number(ticketDiscountAmount.toFixed(2)) : 0}
+                  onChange={(e) => onChangeDiscount(e.target.value)}
+                  className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
+                />
+              </div>
+            </div>
+            {ticketOrderType === "Delivery" && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-cream">Delivery Charges</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm text-text-muted">Rs</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={ticketDeliveryFee ? Number(ticketDeliveryFee.toFixed(2)) : 0}
+                    onChange={(e) => onChangeDeliveryFee(e.target.value)}
+                    className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
+                  />
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-cream">Extra Charges</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-text-muted">Rs</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="10"
+                  value={ticketExtraCharges}
+                  onChange={(e) => onChangeExtraCharges(e.target.value)}
+                  className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* BILL PREVIEW */}
           <div className="flex flex-col gap-2 rounded-xl border border-cream/10 bg-surface-input p-3">
-            {ticketItems.map((item) => (
-              <div key={item.ticketItemId} className="flex justify-between text-sm">
-                <span className="text-cream">
-                  {item.quantity}x {item.product.name}
-                </span>
-                <span className="text-text-muted">{formatCurrency(item.itemPrice * item.quantity)}</span>
-              </div>
-            ))}
+            {ticketItems.map((item) => {
+              const hasItemDiscount = item.originalPrice > item.itemPrice + 0.01;
+              return (
+                <div key={item.ticketItemId} className="flex justify-between text-sm">
+                  <span className="text-cream">
+                    {item.quantity}x {item.product.name}
+                    {hasItemDiscount && (
+                      <span className="ml-1.5 text-[11px] font-bold text-brand-teal">-{item.discountPercent}%</span>
+                    )}
+                  </span>
+                  <span className="flex items-baseline gap-1.5">
+                    {hasItemDiscount && (
+                      <span className="text-[11px] text-text-dim line-through">{formatCurrency(item.originalPrice * item.quantity)}</span>
+                    )}
+                    <span className="text-text-muted">{formatCurrency(item.itemPrice * item.quantity)}</span>
+                  </span>
+                </div>
+              );
+            })}
             <div className="mt-1 flex flex-col gap-1 border-t border-dashed border-cream/15 pt-2">
               <div className="flex justify-between text-sm">
                 <span className="text-text-muted">Items</span>
@@ -170,7 +233,7 @@ export default function CheckoutModal({
               </div>
               {ticketDiscountAmount > 0 && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-brand-teal">Member Discount ({memberDiscountPercent}%)</span>
+                  <span className="text-brand-teal">Discount</span>
                   <span className="text-brand-teal">-{formatCurrency(ticketDiscountAmount)}</span>
                 </div>
               )}
@@ -178,6 +241,12 @@ export default function CheckoutModal({
                 <div className="flex justify-between text-sm">
                   <span className="text-text-muted">Delivery Fee</span>
                   <span className="text-cream">{ticketDeliveryFee > 0 ? formatCurrency(ticketDeliveryFee) : <span className="text-green-400 font-medium">Free</span>}</span>
+                </div>
+              )}
+              {(parseFloat(ticketExtraCharges) || 0) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-muted">Extra Charges</span>
+                  <span className="text-cream">{formatCurrency(parseFloat(ticketExtraCharges) || 0)}</span>
                 </div>
               )}
               <div className="mt-1 flex justify-between font-display text-lg text-cream">

@@ -36,6 +36,8 @@ export default function Sidebar({
           badgeCount={unpaidCount}
           onClick={() => onChangeView("orders")}
         />
+        <NavButton icon="settings" label="Settings" active={view === "settings"} onClick={() => onChangeView("settings")} />
+        <NavButton icon="help" label="Help" active={view === "help"} onClick={() => onChangeView("help")} />
       </nav>
 
       <div className="mt-auto flex flex-col items-center gap-1">

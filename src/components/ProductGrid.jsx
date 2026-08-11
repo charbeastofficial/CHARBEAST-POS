@@ -5,6 +5,7 @@ export default function ProductGrid({
   activeCategory,
   deals,
   products,
+  allProducts,
   categories,
   brokenImageIds,
   markImageBroken,
@@ -24,7 +25,7 @@ export default function ProductGrid({
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
               {deals.map((deal, i) => (
-                <DealCard key={deal.id} deal={deal} index={i} broken={brokenImageIds.has(deal.id)} onBroken={() => markImageBroken(deal.id)} onClick={() => onDealAdd(deal)} />
+                <DealCard key={deal.id} deal={deal} index={i} products={allProducts || []} broken={brokenImageIds.has(deal.id)} onBroken={() => markImageBroken(deal.id)} onClick={() => onDealAdd(deal)} />
               ))}
             </div>
           )
@@ -76,7 +77,14 @@ function LoadingSkeleton() {
   ));
 }
 
-function DealCard({ deal, index, broken, onBroken, onClick }) {
+function DealCard({ deal, index, products, broken, onBroken, onClick }) {
+  const originalPrice = deal.items.reduce((sum, item) => {
+    const product = products.find((p) => p.id === item.productId);
+    return sum + (product?.basePrice || 0) * item.quantity;
+  }, 0);
+  const discount = deal.discountPercent || 0;
+  const hasDiscount = discount > 0 && originalPrice > 0;
+
   return (
     <button
       onClick={onClick}
@@ -89,8 +97,10 @@ function DealCard({ deal, index, broken, onBroken, onClick }) {
         ) : (
           <span className="text-4xl">🔥</span>
         )}
-        {deal.badge && (
-          <span className="absolute top-1.5 left-1.5 rounded-full bg-brand-yellow px-1.5 py-0.5 text-[9px] font-bold text-white">{deal.badge}</span>
+        {hasDiscount && (
+          <span className="absolute top-1.5 left-1.5 z-10 rounded-md bg-brand-red px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-md">
+            -{discount}%
+          </span>
         )}
         <span className="absolute right-1.5 bottom-1.5 flex h-9 w-9 items-center justify-center rounded-full bg-brand-yellow text-white shadow transition group-hover:scale-110 group-active:scale-95">
           <span className="material-symbols-outlined text-lg">add</span>
@@ -98,7 +108,12 @@ function DealCard({ deal, index, broken, onBroken, onClick }) {
       </div>
       <div className="flex flex-col gap-0.5 p-2.5">
         <div className="truncate text-xs font-semibold text-cream">{deal.title}</div>
-        <span className="font-display text-xs font-bold text-brand-yellow">{formatCurrency(deal.price)}</span>
+        <div className="flex items-center gap-1">
+          {hasDiscount && (
+            <span className="font-display text-[10px] font-semibold text-text-muted line-through">{formatCurrency(originalPrice)}</span>
+          )}
+          <span className="font-display text-xs font-bold text-brand-yellow">{formatCurrency(deal.price)}</span>
+        </div>
       </div>
     </button>
   );

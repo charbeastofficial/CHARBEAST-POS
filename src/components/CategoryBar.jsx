@@ -1,33 +1,78 @@
 export default function CategoryBar({ categories, deals, activeCategory, onSelectCategory, brokenImageIds, markImageBroken }) {
+  // Selecting a top-level category that has subcategories surfaces those as
+  // a second row of pills to narrow further, same pattern as the customer
+  // website's menu.
+  const activeCategoryObj = categories.find((c) => c.id === activeCategory) || null;
+  const activeTopLevelId = activeCategoryObj?.parentId || activeCategory;
+  const activeTopLevelCategory = categories.find((c) => c.id === activeTopLevelId) || null;
+  const subCategories = categories
+    .filter((c) => c.parentId === activeTopLevelId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-cream/10 bg-surface-elevated px-5 py-3 overflow-x-auto">
-      <Chip
-        label="All"
-        icon="🍽️"
-        active={activeCategory === "all"}
-        onClick={() => onSelectCategory("all")}
-      />
-      {deals.length > 0 && (
+    <div className="flex shrink-0 flex-col gap-2 border-b border-cream/10 bg-surface-elevated px-5 py-3">
+      <div className="flex items-center gap-2 overflow-x-auto">
         <Chip
-          label="Deals"
-          icon="🔥"
-          active={activeCategory === "deals"}
-          onClick={() => onSelectCategory("deals")}
-          deals
+          label="All"
+          icon="🍽️"
+          active={activeCategory === "all"}
+          onClick={() => onSelectCategory("all")}
         />
+        {deals.length > 0 && (
+          <Chip
+            label="Deals"
+            icon="🔥"
+            active={activeCategory === "deals"}
+            onClick={() => onSelectCategory("deals")}
+            deals
+          />
+        )}
+        {categories.filter((cat) => !cat.parentId).map((cat) => (
+          <Chip
+            key={cat.id}
+            label={cat.name}
+            icon={cat.icon}
+            image={!brokenImageIds.has(cat.id) ? cat.imageURL : null}
+            onImageError={() => markImageBroken(cat.id)}
+            active={activeCategory === cat.id}
+            onClick={() => onSelectCategory(cat.id)}
+          />
+        ))}
+      </div>
+
+      {activeCategory !== "all" && activeCategory !== "deals" && subCategories.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          <SubPill
+            label={`All ${activeTopLevelCategory?.name || ""}`}
+            active={activeCategory === activeTopLevelId}
+            onClick={() => onSelectCategory(activeTopLevelId)}
+          />
+          {subCategories.map((sub) => (
+            <SubPill
+              key={sub.id}
+              label={sub.name}
+              active={activeCategory === sub.id}
+              onClick={() => onSelectCategory(sub.id)}
+            />
+          ))}
+        </div>
       )}
-      {categories.filter((cat) => !cat.parentId).map((cat) => (
-        <Chip
-          key={cat.id}
-          label={cat.name}
-          icon={cat.icon}
-          image={!brokenImageIds.has(cat.id) ? cat.imageURL : null}
-          onImageError={() => markImageBroken(cat.id)}
-          active={activeCategory === cat.id}
-          onClick={() => onSelectCategory(cat.id)}
-        />
-      ))}
     </div>
+  );
+}
+
+function SubPill({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold whitespace-nowrap transition ${
+        active
+          ? "bg-brand-orange/20 text-brand-orange-soft ring-1 ring-brand-orange/40"
+          : "text-text-muted ring-1 ring-cream/10 hover:text-cream"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

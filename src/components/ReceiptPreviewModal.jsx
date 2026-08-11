@@ -8,6 +8,7 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
   const productDiscount = Math.max(0, originalSubtotal - subtotal);
   const memberDiscount = order.discountAmount || 0;
   const deliveryFee = order.deliveryFee || 0;
+  const extraCharges = order.extraCharges || 0;
   const taxableAmount = subtotal - memberDiscount;
   const tax = Number((taxableAmount * taxRate).toFixed(2));
 
@@ -120,6 +121,12 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
             <div className="flex justify-between py-0.5 text-gray-500">
               <span>Delivery Fee</span>
               <span>{formatCurrency(deliveryFee)}</span>
+            </div>
+          )}
+          {extraCharges > 0 && (
+            <div className="flex justify-between py-0.5 text-gray-500">
+              <span>Extra Charges</span>
+              <span>{formatCurrency(extraCharges)}</span>
             </div>
           )}
           <div className="flex justify-between py-0.5 text-gray-500">

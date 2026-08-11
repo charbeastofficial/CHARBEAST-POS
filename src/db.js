@@ -77,6 +77,7 @@ function mapOrder(row, items = []) {
     source: row.source,
     customerId: row.customer_id || null,
     discountAmount: Number(row.discount_amount) || 0,
+    extraCharges: Number(row.extra_charges) || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     items: items.map(mapOrderItem),
@@ -96,8 +97,8 @@ function mapDeal(row, items = []) {
     id: row.id,
     title: row.title,
     description: row.description,
-    badge: row.badge,
     price: Number(row.price),
+    discountPercent: Number(row.discount_percent) || 0,
     imageURL: row.image_url,
     isActive: row.is_active,
     sortOrder: row.sort_order,
@@ -113,19 +114,27 @@ export function resolveTaxRate(settings, paymentMethod) {
 // Order totals are computed from scratch here rather than adjusting the
 // stored total, since tax is only known once a payment method is decided
 // (see createOrder: payment_method starts out NULL).
-async function computeTotalForPaymentMethod(id, paymentMethod, settings) {
+async function fetchOrderTotals(id) {
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
-    supabase.from('orders').select('discount_amount, delivery_fee').eq('id', id).single(),
+    supabase.from('orders').select('discount_amount, delivery_fee, extra_charges, payment_method').eq('id', id).single(),
     supabase.from('order_items').select('quantity, unit_price').eq('order_id', id),
   ]);
   if (orderError) throw orderError;
   if (itemsError) throw itemsError;
 
-  const itemsSum = (items || []).reduce((sum, item) => sum + item.quantity * Number(item.unit_price), 0);
-  const discountAmount = Number(order.discount_amount) || 0;
-  const deliveryFee = Number(order.delivery_fee) || 0;
-  const taxRate = resolveTaxRate(settings, paymentMethod);
-  return Number(((itemsSum - discountAmount) * (1 + taxRate) + deliveryFee).toFixed(2));
+  return {
+    itemsSum: (items || []).reduce((sum, item) => sum + item.quantity * Number(item.unit_price), 0),
+    discountAmount: Number(order.discount_amount) || 0,
+    deliveryFee: Number(order.delivery_fee) || 0,
+    extraCharges: Number(order.extra_charges) || 0,
+    paymentMethod: order.payment_method,
+  };
+}
+
+// No payment method decided yet means no tax yet either (see createOrder).
+function computeOrderTotal({ itemsSum, discountAmount, deliveryFee, extraCharges, paymentMethod, settings }) {
+  const taxRate = paymentMethod ? resolveTaxRate(settings, paymentMethod) : 0;
+  return Number(((itemsSum - discountAmount) * (1 + taxRate) + deliveryFee + (extraCharges || 0)).toFixed(2));
 }
 
 async function fetchOrderWithItems(orderId) {
@@ -170,7 +179,8 @@ export const db = {
     const { data, error } = await supabase
       .from('products')
       .select('*, product_modifiers(*), product_sizes(*), product_addons(sort_order, addons(*))')
-      .order('name');
+      .neq('visibility', 'hidden')
+      .order('sort_order');
 
     if (error) throw error;
 
@@ -193,6 +203,7 @@ export const db = {
       .from('deals')
       .select('*, deal_items(*)')
       .eq('is_active', true)
+      .neq('visibility', 'hidden')
       .order('sort_order');
 
     if (error) throw error;
@@ -270,6 +281,7 @@ export const db = {
       source: 'POS',
       customer_id: orderFields.customerId || null,
       discount_amount: orderFields.discountAmount || 0,
+      extra_charges: orderFields.extraCharges || 0,
     };
 
     // id is server-assigned (sequential, see assign_sequential_order_id
@@ -314,8 +326,11 @@ export const db = {
   // or the cashier changes it here (e.g. customer ends up paying by card
   // instead of what was printed on the bill), recompute the total for tax.
   async markOrderPaid(id, paymentMethod) {
-    const settings = await this.getSiteSettings();
-    const totalAmount = await computeTotalForPaymentMethod(id, paymentMethod, settings);
+    const [settings, { itemsSum, discountAmount, deliveryFee, extraCharges }] = await Promise.all([
+      this.getSiteSettings(),
+      fetchOrderTotals(id),
+    ]);
+    const totalAmount = computeOrderTotal({ itemsSum, discountAmount, deliveryFee, extraCharges, paymentMethod, settings });
 
     const { error } = await supabase
       .from('orders')
@@ -325,12 +340,50 @@ export const db = {
     return fetchOrderWithItems(id);
   },
 
+  // Cashier adjustments to an existing order: delivery fee, discount, and/or
+  // extra charges. The total is recomputed exactly like the original
+  // calculation -- tax only when a payment method (and therefore a tax rate)
+  // is locked in.
+  async updateOrderFinancials(id, { deliveryFee, discountAmount, extraCharges } = {}) {
+    const [settings, { itemsSum, paymentMethod }] = await Promise.all([
+      this.getSiteSettings(),
+      fetchOrderTotals(id),
+    ]);
+
+    const newDiscount = Number(discountAmount) || 0;
+    const newDeliveryFee = Number(deliveryFee) || 0;
+    const newExtraCharges = Number(extraCharges) || 0;
+    const totalAmount = computeOrderTotal({
+      itemsSum,
+      discountAmount: newDiscount,
+      deliveryFee: newDeliveryFee,
+      extraCharges: newExtraCharges,
+      paymentMethod,
+      settings,
+    });
+
+    const { error } = await supabase
+      .from('orders')
+      .update({
+        delivery_fee: newDeliveryFee,
+        discount_amount: newDiscount,
+        extra_charges: newExtraCharges,
+        total_amount: totalAmount,
+      })
+      .eq('id', id);
+    if (error) throw error;
+    return fetchOrderWithItems(id);
+  },
+
   // Called the first time a customer bill is printed for an order (payment
   // method is unknown -- and no tax applied -- until now, see createOrder).
   // Locks in the payment method and the tax rate that goes with it.
   async setOrderPaymentMethod(id, paymentMethod) {
-    const settings = await this.getSiteSettings();
-    const totalAmount = await computeTotalForPaymentMethod(id, paymentMethod, settings);
+    const [settings, { itemsSum, discountAmount, deliveryFee, extraCharges }] = await Promise.all([
+      this.getSiteSettings(),
+      fetchOrderTotals(id),
+    ]);
+    const totalAmount = computeOrderTotal({ itemsSum, discountAmount, deliveryFee, extraCharges, paymentMethod, settings });
 
     const { error } = await supabase
       .from('orders')

@@ -14,6 +14,9 @@ import QueuedOrderDetail from "./components/QueuedOrderDetail";
 import CheckoutModal from "./components/CheckoutModal";
 import ModifierModal from "./components/ModifierModal";
 import OrdersTable from "./components/OrdersTable";
+import SettingsView from "./components/SettingsView";
+import HelpView from "./components/HelpView";
+import EditOrderModal from "./components/EditOrderModal";
 import PrinterConnectModal from "./components/PrinterConnectModal";
 import ReceiptPreviewModal from "./components/ReceiptPreviewModal";
 import { ToastProvider, useToast } from "./components/Toast";
@@ -82,7 +85,19 @@ function AppInner() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [tableNumber, setTableNumber] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [fontSize, setFontSize] = useState(() => {
+    try {
+      return parseInt(localStorage.getItem("charbeast-pos-font-size"), 10) || 16;
+    } catch {
+      return 16;
+    }
+  });
   const [ticketSelectedArea, setTicketSelectedArea] = useState(null);
+  // null means "use the auto-calculated value" -- set once the cashier types
+  // a manual override at checkout, before the order is even created.
+  const [deliveryFeeOverride, setDeliveryFeeOverride] = useState(null);
+  const [discountOverride, setDiscountOverride] = useState(null);
+  const [ticketExtraCharges, setTicketExtraCharges] = useState('0');
   const [deliveryAreas, setDeliveryAreas] = useState([]);
   const [deliverySettingsFull, setDeliverySettingsFull] = useState({
     shopLat: null, shopLng: null, deliveryRadiusKm: 5,
@@ -107,6 +122,9 @@ function AppInner() {
 
   // Which ticket item currently has its note field expanded (only one at a time)
   const [expandedNoteId, setExpandedNoteId] = useState(null);
+
+  // Order editing: cashier adjusts delivery charges / discount on a live order
+  const [editOrder, setEditOrder] = useState(null);
 
   // Checkout popup: order type, payment method, cash calculator, and confirm actions
   // only appear here, kept out of the main order panel to keep it to just the cart.
@@ -220,6 +238,15 @@ function AppInner() {
     }
   };
 
+  // Order editing: recalc totals and refresh every view showing that order
+  const handleSaveOrderEdits = async ({ deliveryFee, discountAmount, extraCharges }) => {
+    const updated = await db.updateOrderFinancials(editOrder.id, { deliveryFee, discountAmount, extraCharges });
+    setOrders((prev) => sortOrders(prev.map((o) => (o.id === updated.id ? updated : o))));
+    setSelectedQueuedOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
+    setEditOrder(null);
+    toast("Order updated.");
+  };
+
   // Fetch initial data
   useEffect(() => {
     if (!user) return;
@@ -303,26 +330,47 @@ function AppInner() {
     return () => unsubscribe();
   }, [soundEnabled, user]);
 
-  // Order sorting: Pending -> Preparing -> Ready -> Completed -> Cancelled
+  // Display size, from the Settings tab -- Tailwind's spacing/type scale is
+  // rem-based, so scaling the root font size scales text, buttons and
+  // spacing together, not just literal text.
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${fontSize}px`;
+    try {
+      localStorage.setItem("charbeast-pos-font-size", String(fontSize));
+    } catch {
+    }
+  }, [fontSize]);
+
+  // Order sorting: Pending (queue) -> Active -> Completed -> Cancelled.
+  // Grouped by isPaid first (same rule the status pill itself uses) so a
+  // paid order always sorts with Completed even if status wasn't updated.
   const sortOrders = (orderList) => {
-    const statusPriority = { Pending: 0, Preparing: 1, Ready: 2, Completed: 3, Cancelled: 4 };
+    const priorityOf = (o) => {
+      if (o.status === "Cancelled") return 3;
+      if (o.isPaid) return 2;
+      if (o.status === "Pending") return 0;
+      return 1;
+    };
     return [...orderList].sort((a, b) => {
-      const priorityDiff = statusPriority[a.status] - statusPriority[b.status];
+      const priorityDiff = priorityOf(a) - priorityOf(b);
       if (priorityDiff !== 0) return priorityDiff;
       // If same status, sort by created date descending
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
   };
 
-  // Cashier cart operations
-  const addToTicket = (product, modifiers = [], size = null, addons = []) => {
+  // Cashier cart operations. `discountOverride` (a percentage) is used by
+  // deals, which carry their own discount just like products do.
+  const addToTicket = (product, modifiers = [], size = null, addons = [], discountOverride = null) => {
     const sizeId = size ? `-${size.id}` : "";
     const modId = modifiers.map(m => m.name).sort().join("|");
     const addonId = addons.map(a => a.id).sort().join("|");
     const ticketItemId = `${product.id}${sizeId}-${modId}-${addonId}`;
 
     const cat = categories.find((c) => c.id === product.categoryID);
-    const discount = product.discountPercent > 0 ? product.discountPercent : (cat?.discountPercent || 0);
+    const discount = discountOverride !== null
+      ? discountOverride
+      : (product.discountPercent > 0 ? product.discountPercent : (cat?.discountPercent || 0));
 
     setTicketItems(prev => {
       const existing = prev.find(item => item.ticketItemId === ticketItemId);
@@ -380,9 +428,10 @@ function AppInner() {
   // (see handlePickBillPaymentMethod / db.setOrderPaymentMethod).
   const memberDiscountPercent = siteSettings?.memberDiscountPercent ?? 10;
   const ticketSubtotal = ticketItems.reduce((acc, item) => acc + (item.itemPrice * item.quantity), 0);
-  const ticketDiscountAmount = isMemberOrder ? ticketSubtotal * (memberDiscountPercent / 100) : 0;
+  const autoDiscountAmount = isMemberOrder ? ticketSubtotal * (memberDiscountPercent / 100) : 0;
+  const ticketDiscountAmount = discountOverride !== null ? (parseFloat(discountOverride) || 0) : autoDiscountAmount;
 
-  const ticketDeliveryFee = (() => {
+  const autoDeliveryFee = (() => {
     if (ticketOrderType !== "Delivery") return 0;
     if (deliverySettingsFull.deliveryFreeMinAmount > 0 && ticketSubtotal >= deliverySettingsFull.deliveryFreeMinAmount) return 0;
     if (deliverySettingsFull.deliveryChargeType === 'area') {
@@ -390,8 +439,10 @@ function AppInner() {
     }
     return Number(deliverySettingsFull.deliveryBaseFee) || 0;
   })();
+  const ticketDeliveryFee = deliveryFeeOverride !== null ? (parseFloat(deliveryFeeOverride) || 0) : autoDeliveryFee;
+  const ticketExtraChargesAmount = parseFloat(ticketExtraCharges) || 0;
 
-  const ticketTotal = ticketSubtotal - ticketDiscountAmount + ticketDeliveryFee;
+  const ticketTotal = ticketSubtotal - ticketDiscountAmount + ticketDeliveryFee + ticketExtraChargesAmount;
 
   const buildTicketOrderPayload = () => ({
     customerName: customerName.trim() || "Walk-In Customer",
@@ -401,6 +452,7 @@ function AppInner() {
     deliveryAddress: ticketOrderType === "Delivery" ? deliveryAddress.trim() : "",
     tableNumber: ticketOrderType === "Dine-in" ? tableNumber.trim() : "",
     deliveryFee: parseFloat(ticketDeliveryFee.toFixed(2)),
+    extraCharges: parseFloat(ticketExtraChargesAmount.toFixed(2)),
     totalAmount: parseFloat(ticketTotal.toFixed(2)),
     items: ticketItems.map(item => ({
       productID: item.product.id,
@@ -421,6 +473,9 @@ function AppInner() {
     setExpandedNoteId(null);
     setTicketSelectedArea(null);
     setIsMemberOrder(false);
+    setDeliveryFeeOverride(null);
+    setDiscountOverride(null);
+    setTicketExtraCharges('0');
   };
 
   // The waiter's order goes straight to the kitchen -- no payment method
@@ -555,7 +610,8 @@ function AppInner() {
     }
   };
 
-  // Add every item in a deal bundle to the ticket at once
+  // Add every item in a deal bundle to the ticket at once. The deal's own
+  // discount applies to each item, just like a product discount.
   const handleDealAdd = (deal) => {
     deal.items.forEach((item) => {
       const product = products.find((p) => p.id === item.productId);
@@ -564,7 +620,7 @@ function AppInner() {
         .map((name) => product.modifiers?.find((m) => m.name === name))
         .filter(Boolean);
       for (let i = 0; i < (item.quantity || 1); i += 1) {
-        addToTicket(product, modifiers);
+        addToTicket(product, modifiers, null, [], deal.discountPercent || 0);
       }
     });
   };
@@ -663,6 +719,7 @@ function AppInner() {
                   activeCategory={activeCategory}
                   deals={deals}
                   products={activeCategory === "deals" ? deals : filteredProducts}
+                  allProducts={products}
                   categories={categories}
                   brokenImageIds={brokenImageIds}
                   markImageBroken={markImageBroken}
@@ -685,6 +742,7 @@ function AppInner() {
                       onConfirm={handleConfirmOnlineOrder}
                       onUpdateStatus={handleUpdateStatus}
                       onMarkPaid={handleMarkOrderPaid}
+                      onEditOrder={setEditOrder}
                     />
                   ) : (
                     <>
@@ -717,7 +775,11 @@ function AppInner() {
                           setTableNumber={setTableNumber}
                           ticketSubtotal={ticketSubtotal}
                           ticketDeliveryFee={ticketDeliveryFee}
+                          onChangeDeliveryFee={setDeliveryFeeOverride}
                           ticketDiscountAmount={ticketDiscountAmount}
+                          onChangeDiscount={setDiscountOverride}
+                          ticketExtraCharges={ticketExtraCharges}
+                          onChangeExtraCharges={setTicketExtraCharges}
                           ticketTotal={ticketTotal}
                           memberDiscountPercent={memberDiscountPercent}
                           isMemberOrder={isMemberOrder}
@@ -750,8 +812,15 @@ function AppInner() {
               onPrintBill={printBill}
               onPreviewBill={previewBill}
               onMarkPaid={handleMarkOrderPaid}
+              onEditOrder={setEditOrder}
             />
           )}
+
+          {view === "settings" && (
+            <SettingsView fontSize={fontSize} onChangeFontSize={setFontSize} />
+          )}
+
+          {view === "help" && <HelpView />}
         </div>
       </div>
 
@@ -843,6 +912,15 @@ function AppInner() {
             </button>
           </div>
         </div>
+      )}
+
+      {editOrder && (
+        <EditOrderModal
+          order={editOrder}
+          siteSettings={siteSettings}
+          onSave={handleSaveOrderEdits}
+          onClose={() => setEditOrder(null)}
+        />
       )}
     </div>
   );

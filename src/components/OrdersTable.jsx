@@ -14,6 +14,7 @@ export default function OrdersTable({
   onPrintBill,
   onPreviewBill,
   onMarkPaid,
+  onEditOrder,
   orderSearch,
   setOrderSearch,
 }) {
@@ -63,7 +64,7 @@ export default function OrdersTable({
             <div key={order.id} className="rounded-xl border border-cream/10 bg-surface-card p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-bold text-cream">#{order.id.slice(-6).toUpperCase()}</span>
-                <StatusPill status={order.status} />
+                <StatusPill status={order.status} isPaid={order.isPaid} />
               </div>
               <div className="mb-2 space-y-1 text-xs text-text-muted">
                 <div className="flex justify-between">
@@ -87,6 +88,9 @@ export default function OrdersTable({
                 <button onClick={() => onPrintTicket(order)} title="Print kitchen ticket" className="rounded-lg border border-cream/10 bg-surface-input px-3 py-2 text-xs font-bold text-text-muted transition hover:text-cream">KOT</button>
                 <button onClick={() => onPreviewBill(order)} className="rounded-lg border border-cream/10 bg-surface-input px-3 py-2 text-xs font-bold text-text-muted transition hover:text-cream">Preview</button>
                 <button onClick={() => onPrintBill(order)} className="rounded-lg border border-cream/10 bg-surface-input px-3 py-2 text-xs font-bold text-text-muted transition hover:text-cream">Customer Bill</button>
+                {!order.isPaid && order.status !== "Cancelled" && (
+                  <button onClick={() => onEditOrder(order)} className="rounded-lg border border-cream/10 bg-surface-input px-3 py-2 text-xs font-bold text-text-muted transition hover:text-cream">Edit</button>
+                )}
                 {!order.isPaid && (
                   <button onClick={() => onMarkPaid(order, order.paymentMethod || 'Cash')} className="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white transition hover:brightness-105">Mark Paid</button>
                 )}
@@ -149,7 +153,7 @@ export default function OrdersTable({
                       </span>
                     </td>
                     <td className={TD}>
-                      <StatusPill status={order.status} />
+                      <StatusPill status={order.status} isPaid={order.isPaid} />
                     </td>
                     <td className={`${TD} text-right`}>
                       <div className="flex items-center justify-end gap-1">
@@ -174,6 +178,15 @@ export default function OrdersTable({
                         >
                           Customer Bill
                         </button>
+                        {!order.isPaid && order.status !== "Cancelled" && (
+                          <button
+                            onClick={() => onEditOrder(order)}
+                            title="Edit delivery fee / discount"
+                            className="rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-xs font-bold text-text-muted transition hover:text-cream"
+                          >
+                            Edit
+                          </button>
+                        )}
                         {!order.isPaid && (
                           <button
                             onClick={() => onMarkPaid(order, order.paymentMethod || 'Cash')}

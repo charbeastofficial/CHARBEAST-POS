@@ -14,6 +14,7 @@ export default function QueuedOrderDetail({
   onConfirm,
   onUpdateStatus,
   onMarkPaid,
+  onEditOrder,
 }) {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -60,6 +61,16 @@ export default function QueuedOrderDetail({
                 </button>
               </>
             )}
+            {!order.isPaid && order.status !== "Cancelled" && (
+              <button
+                onClick={() => onEditOrder(order)}
+                title="Edit delivery fee / discount"
+                className="flex items-center gap-1 rounded-md border border-cream/10 bg-surface-input px-2.5 py-1 text-sm text-text-muted transition hover:text-cream"
+              >
+                <span className="material-symbols-outlined text-[16px]">edit</span>
+                Edit
+              </button>
+            )}
             <button
               onClick={onClose}
               className="rounded-md border border-cream/10 bg-surface-input px-2.5 py-1 text-sm text-text-muted transition hover:text-cream"
@@ -93,16 +104,7 @@ export default function QueuedOrderDetail({
               Confirm &amp; Send to Kitchen
             </button>
           )}
-          {order.status === "Preparing" && (
-            <button
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-teal py-2.5 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.98]"
-              onClick={() => onUpdateStatus("Ready")}
-            >
-              <span className="material-symbols-outlined text-[18px]">inventory_2</span>
-              Mark Ready
-            </button>
-          )}
-          {order.status === "Ready" && (
+          {["Preparing", "Ready"].includes(order.status) && (
             <button
               className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-green py-2.5 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.98]"
               onClick={() => onMarkPaid(order, "Cash")}
