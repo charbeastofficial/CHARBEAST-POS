@@ -17,7 +17,6 @@
   "dependencies": {
     "@point-of-sale/receipt-printer-encoder": "^3.0.3",
     "@supabase/supabase-js": "^2.110.4",
-    "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -54,13 +53,6 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "charbeastofficial",
-        "repo": "CHARBEAST-POS"
-      }
-    ]
+    }
   }
 }
