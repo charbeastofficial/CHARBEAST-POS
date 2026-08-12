@@ -18,10 +18,13 @@ export default function CheckoutModal({
   ticketSubtotal,
   ticketDeliveryFee,
   onChangeDeliveryFee,
-  ticketDiscountAmount,
-  onChangeDiscount,
+  memberDiscountAmount,
+  extraDiscount,
+  onChangeExtraDiscount,
   ticketExtraCharges,
   onChangeExtraCharges,
+  ticketExtraChargesNote,
+  onChangeExtraChargesNote,
   ticketTotal,
   memberDiscountPercent,
   isMemberOrder,
@@ -30,6 +33,7 @@ export default function CheckoutModal({
   deliveryAreas,
   selectedArea,
   onSelectArea,
+  isEditing,
   onClose,
   onSendToKitchen,
 }) {
@@ -50,7 +54,7 @@ export default function CheckoutModal({
         className="flex max-h-[90vh] w-full max-w-md animate-[popIn_0.2s_ease-out] flex-col overflow-hidden rounded-2xl border border-cream/10 bg-surface-card shadow-xl"
       >
         <div className="flex items-center justify-between border-b border-cream/10 p-4">
-          <h3 id="checkout-modal-title" className="text-lg font-bold text-cream">Review &amp; Checkout</h3>
+          <h3 id="checkout-modal-title" className="text-lg font-bold text-cream">{isEditing ? "Edit Order" : "Review & Checkout"}</h3>
           <button
             type="button"
             aria-label="Close"
@@ -157,21 +161,26 @@ export default function CheckoutModal({
             </button>
           </div>
 
-          {/* MANUAL DISCOUNT + DELIVERY FEE -- editable at checkout, before the order even exists */}
+          {/* EXTRA DISCOUNT + DELIVERY FEE + EXTRA CHARGES -- editable at checkout, before the order even exists */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-cream">Discount Amount</span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm text-text-muted">Rs</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="10"
-                  value={ticketDiscountAmount ? Number(ticketDiscountAmount.toFixed(2)) : 0}
-                  onChange={(e) => onChangeDiscount(e.target.value)}
-                  className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
-                />
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-cream">Extra Discount</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm text-text-muted">Rs</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={extraDiscount}
+                    onChange={(e) => onChangeExtraDiscount(e.target.value)}
+                    className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
+                  />
+                </div>
               </div>
+              <p className="text-[11px] text-text-dim">
+                A plain discount from the cashier, separate from the member discount above -- member discount only applies when Member is selected.
+              </p>
             </div>
             {ticketOrderType === "Delivery" && (
               <div className="flex items-center justify-between gap-3">
@@ -189,19 +198,32 @@ export default function CheckoutModal({
                 </div>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-cream">Extra Charges</span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm text-text-muted">Rs</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="10"
-                  value={ticketExtraCharges}
-                  onChange={(e) => onChangeExtraCharges(e.target.value)}
-                  className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
-                />
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-cream">Extra Charges</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm text-text-muted">Rs</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={ticketExtraCharges}
+                    onChange={(e) => onChangeExtraCharges(e.target.value)}
+                    className="w-24 rounded-lg border border-cream/10 bg-surface-input px-2.5 py-1.5 text-right text-sm font-bold text-cream focus:border-brand-orange focus:outline-none"
+                  />
+                </div>
               </div>
+              {(parseFloat(ticketExtraCharges) || 0) > 0 && (
+                <input
+                  type="text"
+                  value={ticketExtraChargesNote}
+                  onChange={(e) => onChangeExtraChargesNote(e.target.value)}
+                  placeholder="What's this for? e.g. packaging, service fee..."
+                  maxLength={100}
+                  className="w-full rounded-lg border border-cream/10 bg-surface-input px-3 py-1.5 text-sm text-cream placeholder:text-text-dim focus:border-brand-orange focus:ring-1 focus:ring-brand-orange focus:outline-none"
+                />
+              )}
+              <p className="text-[11px] text-text-dim">Any additional charge on this order -- add a note so it's clear on the bill.</p>
             </div>
           </div>
 
@@ -231,10 +253,16 @@ export default function CheckoutModal({
                 <span className="text-text-muted">Items</span>
                 <span className="text-cream">{formatCurrency(ticketSubtotal)}</span>
               </div>
-              {ticketDiscountAmount > 0 && (
+              {memberDiscountAmount > 0 && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-brand-teal">Discount</span>
-                  <span className="text-brand-teal">-{formatCurrency(ticketDiscountAmount)}</span>
+                  <span className="text-brand-teal">Member Discount ({memberDiscountPercent}%)</span>
+                  <span className="text-brand-teal">-{formatCurrency(memberDiscountAmount)}</span>
+                </div>
+              )}
+              {(parseFloat(extraDiscount) || 0) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-brand-teal">Extra Discount</span>
+                  <span className="text-brand-teal">-{formatCurrency(parseFloat(extraDiscount) || 0)}</span>
                 </div>
               )}
               {ticketOrderType === "Delivery" && (
@@ -245,7 +273,9 @@ export default function CheckoutModal({
               )}
               {(parseFloat(ticketExtraCharges) || 0) > 0 && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-text-muted">Extra Charges</span>
+                  <span className="text-text-muted">
+                    Extra Charges{ticketExtraChargesNote.trim() && ` (${ticketExtraChargesNote.trim()})`}
+                  </span>
                   <span className="text-cream">{formatCurrency(parseFloat(ticketExtraCharges) || 0)}</span>
                 </div>
               )}
@@ -262,11 +292,13 @@ export default function CheckoutModal({
             className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange py-3 text-base font-bold text-white shadow-[0_4px_10px_rgba(255,87,34,0.3)] transition hover:brightness-105 active:scale-[0.98]"
             onClick={onSendToKitchen}
           >
-            <span className="material-symbols-outlined text-[18px]">soup_kitchen</span>
-            Send to Kitchen
+            <span className="material-symbols-outlined text-[18px]">{isEditing ? "save" : "soup_kitchen"}</span>
+            {isEditing ? "Save Changes" : "Send to Kitchen"}
           </button>
           <p className="text-center text-xs text-text-muted">
-            No payment yet -- sales tax is added once a payment method is picked when the bill is printed, from the Orders tab.
+            {isEditing
+              ? "Updates this order's items and totals -- tax is recalculated if a payment method was already picked."
+              : "No payment yet -- sales tax is added once a payment method is picked when the bill is printed, from the Orders tab."}
           </p>
         </div>
       </div>

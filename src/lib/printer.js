@@ -173,11 +173,18 @@ export async function printBillReceiptDirect(order, taxRate) {
   const originalSubtotal = order.items.reduce((sum, item) => sum + (item.originalUnitPrice ?? item.unitPrice) * item.quantity, 0);
   const chargedSubtotal = order.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const productDiscount = Math.max(0, originalSubtotal - chargedSubtotal);
-  const memberDiscount = order.discountAmount || 0;
-  const totalDiscount = productDiscount + memberDiscount;
+  // discountAmount is member + cashier-added extra discount combined; only
+  // the member portion is tracked separately, so the rest is the cashier's.
+  const orderDiscountAmount = order.discountAmount || 0;
+  const memberDiscount = order.memberDiscountAmount || 0;
+  const cashierDiscount = Math.max(0, orderDiscountAmount - memberDiscount);
+  const totalDiscount = productDiscount + orderDiscountAmount;
   const deliveryFee = order.deliveryFee || 0;
   const extraCharges = order.extraCharges || 0;
-  const tax = Number(((chargedSubtotal - memberDiscount) * taxRate).toFixed(2));
+  const extraChargesLabel = order.extraChargesNote?.trim()
+    ? fit(`Extra Chg (${order.extraChargesNote.trim()})`, 24)
+    : 'Extra Charges';
+  const tax = Number(((chargedSubtotal - orderDiscountAmount) * taxRate).toFixed(2));
 
   const isRiderOrder = order.source === 'Online' || order.orderType === 'Delivery';
 
@@ -241,8 +248,9 @@ export async function printBillReceiptDirect(order, taxRate) {
   const totalsRows = [['Subtotal', formatCurrency(originalSubtotal)]];
   if (productDiscount > 0) totalsRows.push(['Product Discount', `-${formatCurrency(productDiscount)}`]);
   if (memberDiscount > 0) totalsRows.push(['Member Discount', `-${formatCurrency(memberDiscount)}`]);
+  if (cashierDiscount > 0) totalsRows.push(['Extra Discount', `-${formatCurrency(cashierDiscount)}`]);
   if (deliveryFee > 0) totalsRows.push(['Delivery Fee', formatCurrency(deliveryFee)]);
-  if (extraCharges > 0) totalsRows.push(['Extra Charges', formatCurrency(extraCharges)]);
+  if (extraCharges > 0) totalsRows.push([extraChargesLabel, formatCurrency(extraCharges)]);
   totalsRows.push([`Tax (${(taxRate * 100).toFixed(1)}%)`, formatCurrency(tax)]);
 
   encoder

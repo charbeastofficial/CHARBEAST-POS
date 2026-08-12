@@ -5,9 +5,10 @@
 // socket access, there's no need for a separate service, a port, or a shared
 // auth token -- the renderer reaches it over Electron's own IPC, which
 // nothing outside this app can call.
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const net = require('node:net');
+const { autoUpdater } = require('electron-updater');
 
 const isDev = !app.isPackaged;
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3001';
@@ -114,7 +115,46 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+// Auto-update: downloads a new release in the background as soon as one's
+// found, then prompts to restart -- no manual reinstall on the customer's
+// machine ever again. Only meaningful in a packaged build (isDev has no
+// installer to update).
+const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // every 4 hours
+
+function initAutoUpdater() {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Update ready',
+      message: `CharBeast POS ${info.version} has been downloaded.`,
+      detail: 'Restart now to install it, or it will install automatically next time the app closes.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-update check failed:', err);
+  });
+
+  autoUpdater.checkForUpdates().catch((err) => console.error('Auto-update check failed:', err));
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => console.error('Auto-update check failed:', err));
+  }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  initAutoUpdater();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

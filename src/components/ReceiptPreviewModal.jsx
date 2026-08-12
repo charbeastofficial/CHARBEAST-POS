@@ -6,10 +6,14 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
   const originalSubtotal = order.items.reduce((sum, item) => sum + (item.originalUnitPrice ?? item.unitPrice) * item.quantity, 0);
   const subtotal = order.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const productDiscount = Math.max(0, originalSubtotal - subtotal);
-  const memberDiscount = order.discountAmount || 0;
+  // discountAmount is member + cashier-added extra discount combined; only
+  // the member portion is tracked separately, so the rest is the cashier's.
+  const orderDiscountAmount = order.discountAmount || 0;
+  const memberDiscount = order.memberDiscountAmount || 0;
+  const cashierDiscount = Math.max(0, orderDiscountAmount - memberDiscount);
   const deliveryFee = order.deliveryFee || 0;
   const extraCharges = order.extraCharges || 0;
-  const taxableAmount = subtotal - memberDiscount;
+  const taxableAmount = subtotal - orderDiscountAmount;
   const tax = Number((taxableAmount * taxRate).toFixed(2));
 
   useEffect(() => {
@@ -117,6 +121,12 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
               <span>-{formatCurrency(memberDiscount)}</span>
             </div>
           )}
+          {cashierDiscount > 0 && (
+            <div className="flex justify-between py-0.5 text-gray-500">
+              <span>Extra Discount</span>
+              <span>-{formatCurrency(cashierDiscount)}</span>
+            </div>
+          )}
           {deliveryFee > 0 && (
             <div className="flex justify-between py-0.5 text-gray-500">
               <span>Delivery Fee</span>
@@ -125,7 +135,7 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
           )}
           {extraCharges > 0 && (
             <div className="flex justify-between py-0.5 text-gray-500">
-              <span>Extra Charges</span>
+              <span>Extra Charges{order.extraChargesNote?.trim() && ` (${order.extraChargesNote.trim()})`}</span>
               <span>{formatCurrency(extraCharges)}</span>
             </div>
           )}
@@ -138,6 +148,12 @@ export default function ReceiptPreviewModal({ order, taxRate, onClose }) {
             <span>TOTAL</span>
             <span>{formatCurrency(order.totalAmount)}</span>
           </div>
+          {productDiscount + orderDiscountAmount > 0 && (
+            <div className="flex justify-between py-0.5 font-bold text-green-600">
+              <span>You Saved</span>
+              <span>{formatCurrency(productDiscount + orderDiscountAmount)}</span>
+            </div>
+          )}
           <div className="my-2 border-t border-dashed border-gray-300" />
           <div className="mb-1 flex justify-between">
             <span className="text-gray-500">Payment:</span>

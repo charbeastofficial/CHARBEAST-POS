@@ -77,7 +77,9 @@ function mapOrder(row, items = []) {
     source: row.source,
     customerId: row.customer_id || null,
     discountAmount: Number(row.discount_amount) || 0,
+    memberDiscountAmount: Number(row.member_discount_amount) || 0,
     extraCharges: Number(row.extra_charges) || 0,
+    extraChargesNote: row.extra_charges_note || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     items: items.map(mapOrderItem),
@@ -135,6 +137,18 @@ async function fetchOrderTotals(id) {
 function computeOrderTotal({ itemsSum, discountAmount, deliveryFee, extraCharges, paymentMethod, settings }) {
   const taxRate = paymentMethod ? resolveTaxRate(settings, paymentMethod) : 0;
   return Number(((itemsSum - discountAmount) * (1 + taxRate) + deliveryFee + (extraCharges || 0)).toFixed(2));
+}
+
+function itemRows(orderId, items) {
+  return items.map((item) => ({
+    order_id: orderId,
+    product_id: item.productId || item.productID || null,
+    product_name: item.name,
+    quantity: item.quantity,
+    unit_price: item.unitPrice ?? item.price ?? 0,
+    original_unit_price: item.originalPrice ?? null,
+    notes: item.notes || '',
+  }));
 }
 
 async function fetchOrderWithItems(orderId) {
@@ -281,7 +295,9 @@ export const db = {
       source: 'POS',
       customer_id: orderFields.customerId || null,
       discount_amount: orderFields.discountAmount || 0,
+      member_discount_amount: orderFields.memberDiscountAmount || 0,
       extra_charges: orderFields.extraCharges || 0,
+      extra_charges_note: orderFields.extraChargesNote || '',
     };
 
     // id is server-assigned (sequential, see assign_sequential_order_id
@@ -294,22 +310,87 @@ export const db = {
     const id = inserted.id;
 
     if (items.length > 0) {
-      const rows = items.map((item) => ({
-        order_id: id,
-        product_id: item.productId || item.productID || null,
-        product_name: item.name,
-        quantity: item.quantity,
-        unit_price: item.unitPrice ?? item.price ?? 0,
-        original_unit_price: item.originalPrice ?? null,
-        notes: item.notes || '',
-      }));
-
-      const { error: itemsError } = await supabase.from('order_items').insert(rows);
+      const { error: itemsError } = await supabase.from('order_items').insert(itemRows(id, items));
       if (itemsError) {
         const detail = itemsError.details ? ` (${itemsError.details})` : '';
         throw new Error(`Order items insert failed: ${itemsError.message}${detail}`);
       }
     }
+
+    return fetchOrderWithItems(id);
+  },
+
+  // Full order editing (not yet paid): the cashier can add/remove items and
+  // adjust order-level fields the same way as at checkout -- items are
+  // replaced wholesale rather than diffed, since a ticket rebuild is cheap.
+  async updateOrderItems(id, order) {
+    const { items = [], ...orderFields } = order;
+
+    const { count: previousItemCount, error: countError } = await supabase
+      .from('order_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_id', id);
+    if (countError) throw countError;
+
+    // .select('id') to know how many rows actually got deleted -- a query
+    // that "succeeds" with 0 rows (e.g. blocked by RLS) would otherwise
+    // silently leave the old items in place, doubling them up once the new
+    // set is inserted below.
+    const { data: deletedRows, error: deleteError } = await supabase.from('order_items').delete().eq('order_id', id).select('id');
+    if (deleteError) throw deleteError;
+
+    if (previousItemCount > 0 && (deletedRows || []).length === 0) {
+      throw new Error("Couldn't remove this order's existing items (permission denied) -- changes not saved.");
+    }
+
+    if (items.length > 0) {
+      const { error: itemsError } = await supabase.from('order_items').insert(itemRows(id, items));
+      if (itemsError) {
+        const detail = itemsError.details ? ` (${itemsError.details})` : '';
+        throw new Error(`Order items insert failed: ${itemsError.message}${detail}`);
+      }
+    }
+
+    // Recompute total server-side rather than trusting the ticket-builder's
+    // pre-tax total -- if a payment method was already locked in (bill
+    // already printed) before this edit, its tax still needs to apply to
+    // the edited items/fees, which the client has no way to know to add.
+    const [settings, { data: existing, error: fetchError }] = await Promise.all([
+      this.getSiteSettings(),
+      supabase.from('orders').select('payment_method').eq('id', id).single(),
+    ]);
+    if (fetchError) throw fetchError;
+
+    const itemsSum = items.reduce((sum, item) => sum + item.quantity * (item.unitPrice ?? item.price ?? 0), 0);
+    const discountAmount = orderFields.discountAmount || 0;
+    const deliveryFee = orderFields.deliveryFee || 0;
+    const extraCharges = orderFields.extraCharges || 0;
+    const totalAmount = computeOrderTotal({
+      itemsSum,
+      discountAmount,
+      deliveryFee,
+      extraCharges,
+      paymentMethod: existing.payment_method,
+      settings,
+    });
+
+    const { error: orderError } = await supabase
+      .from('orders')
+      .update({
+        customer_name: orderFields.customerName,
+        customer_phone: orderFields.customerPhone || '',
+        order_type: orderFields.orderType || 'Dine-in',
+        delivery_address: orderFields.deliveryAddress || '',
+        table_number: orderFields.tableNumber || '',
+        delivery_fee: deliveryFee,
+        discount_amount: discountAmount,
+        member_discount_amount: orderFields.memberDiscountAmount || 0,
+        extra_charges: extraCharges,
+        extra_charges_note: orderFields.extraChargesNote || '',
+        total_amount: totalAmount,
+      })
+      .eq('id', id);
+    if (orderError) throw orderError;
 
     return fetchOrderWithItems(id);
   },
@@ -335,41 +416,6 @@ export const db = {
     const { error } = await supabase
       .from('orders')
       .update({ is_paid: true, payment_method: paymentMethod, status: 'Completed', total_amount: totalAmount })
-      .eq('id', id);
-    if (error) throw error;
-    return fetchOrderWithItems(id);
-  },
-
-  // Cashier adjustments to an existing order: delivery fee, discount, and/or
-  // extra charges. The total is recomputed exactly like the original
-  // calculation -- tax only when a payment method (and therefore a tax rate)
-  // is locked in.
-  async updateOrderFinancials(id, { deliveryFee, discountAmount, extraCharges } = {}) {
-    const [settings, { itemsSum, paymentMethod }] = await Promise.all([
-      this.getSiteSettings(),
-      fetchOrderTotals(id),
-    ]);
-
-    const newDiscount = Number(discountAmount) || 0;
-    const newDeliveryFee = Number(deliveryFee) || 0;
-    const newExtraCharges = Number(extraCharges) || 0;
-    const totalAmount = computeOrderTotal({
-      itemsSum,
-      discountAmount: newDiscount,
-      deliveryFee: newDeliveryFee,
-      extraCharges: newExtraCharges,
-      paymentMethod,
-      settings,
-    });
-
-    const { error } = await supabase
-      .from('orders')
-      .update({
-        delivery_fee: newDeliveryFee,
-        discount_amount: newDiscount,
-        extra_charges: newExtraCharges,
-        total_amount: totalAmount,
-      })
       .eq('id', id);
     if (error) throw error;
     return fetchOrderWithItems(id);

@@ -1,7 +1,7 @@
 {
   "name": "pos-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "CharBeast POS desktop terminal",
   "author": "CharBeast",
   "type": "module",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@point-of-sale/receipt-printer-encoder": "^3.0.3",
     "@supabase/supabase-js": "^2.110.4",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -53,6 +54,13 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "charbeastofficial",
+        "repo": "CHARBEAST-POS"
+      }
+    ]
   }
 }

@@ -16,7 +16,6 @@ import ModifierModal from "./components/ModifierModal";
 import OrdersTable from "./components/OrdersTable";
 import SettingsView from "./components/SettingsView";
 import HelpView from "./components/HelpView";
-import EditOrderModal from "./components/EditOrderModal";
 import PrinterConnectModal from "./components/PrinterConnectModal";
 import ReceiptPreviewModal from "./components/ReceiptPreviewModal";
 import { ToastProvider, useToast } from "./components/Toast";
@@ -96,8 +95,15 @@ function AppInner() {
   // null means "use the auto-calculated value" -- set once the cashier types
   // a manual override at checkout, before the order is even created.
   const [deliveryFeeOverride, setDeliveryFeeOverride] = useState(null);
-  const [discountOverride, setDiscountOverride] = useState(null);
+  // A cashier-added extra discount, separate from (and stacked on top of)
+  // the member discount -- not a replacement for it. Member discount only
+  // ever applies when Member is selected.
+  const [extraDiscount, setExtraDiscount] = useState('0');
   const [ticketExtraCharges, setTicketExtraCharges] = useState('0');
+  const [ticketExtraChargesNote, setTicketExtraChargesNote] = useState('');
+  // Set while editing an existing (unpaid) order's items/fields through the
+  // same ticket-builder + checkout screen used to create one.
+  const [editingOrderId, setEditingOrderId] = useState(null);
   const [deliveryAreas, setDeliveryAreas] = useState([]);
   const [deliverySettingsFull, setDeliverySettingsFull] = useState({
     shopLat: null, shopLng: null, deliveryRadiusKm: 5,
@@ -122,9 +128,6 @@ function AppInner() {
 
   // Which ticket item currently has its note field expanded (only one at a time)
   const [expandedNoteId, setExpandedNoteId] = useState(null);
-
-  // Order editing: cashier adjusts delivery charges / discount on a live order
-  const [editOrder, setEditOrder] = useState(null);
 
   // Checkout popup: order type, payment method, cash calculator, and confirm actions
   // only appear here, kept out of the main order panel to keep it to just the cart.
@@ -236,15 +239,6 @@ function AppInner() {
       console.error("Failed to set order payment method:", err);
       toast(err.message || "Error setting payment method.", "error");
     }
-  };
-
-  // Order editing: recalc totals and refresh every view showing that order
-  const handleSaveOrderEdits = async ({ deliveryFee, discountAmount, extraCharges }) => {
-    const updated = await db.updateOrderFinancials(editOrder.id, { deliveryFee, discountAmount, extraCharges });
-    setOrders((prev) => sortOrders(prev.map((o) => (o.id === updated.id ? updated : o))));
-    setSelectedQueuedOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
-    setEditOrder(null);
-    toast("Order updated.");
   };
 
   // Fetch initial data
@@ -428,8 +422,12 @@ function AppInner() {
   // (see handlePickBillPaymentMethod / db.setOrderPaymentMethod).
   const memberDiscountPercent = siteSettings?.memberDiscountPercent ?? 10;
   const ticketSubtotal = ticketItems.reduce((acc, item) => acc + (item.itemPrice * item.quantity), 0);
-  const autoDiscountAmount = isMemberOrder ? ticketSubtotal * (memberDiscountPercent / 100) : 0;
-  const ticketDiscountAmount = discountOverride !== null ? (parseFloat(discountOverride) || 0) : autoDiscountAmount;
+  // Member discount only ever applies when Member is selected; the extra
+  // discount the cashier types in is a separate, additional amount on top
+  // of that (or the only discount at all, for a non-member order).
+  const memberDiscountAmount = isMemberOrder ? ticketSubtotal * (memberDiscountPercent / 100) : 0;
+  const extraDiscountAmount = parseFloat(extraDiscount) || 0;
+  const ticketDiscountAmount = memberDiscountAmount + extraDiscountAmount;
 
   const autoDeliveryFee = (() => {
     if (ticketOrderType !== "Delivery") return 0;
@@ -448,11 +446,13 @@ function AppInner() {
     customerName: customerName.trim() || "Walk-In Customer",
     customerPhone: customerPhone.trim() || "N/A",
     discountAmount: parseFloat(ticketDiscountAmount.toFixed(2)),
+    memberDiscountAmount: parseFloat(memberDiscountAmount.toFixed(2)),
     orderType: ticketOrderType,
     deliveryAddress: ticketOrderType === "Delivery" ? deliveryAddress.trim() : "",
     tableNumber: ticketOrderType === "Dine-in" ? tableNumber.trim() : "",
     deliveryFee: parseFloat(ticketDeliveryFee.toFixed(2)),
     extraCharges: parseFloat(ticketExtraChargesAmount.toFixed(2)),
+    extraChargesNote: ticketExtraChargesNote.trim(),
     totalAmount: parseFloat(ticketTotal.toFixed(2)),
     items: ticketItems.map(item => ({
       productID: item.product.id,
@@ -474,23 +474,30 @@ function AppInner() {
     setTicketSelectedArea(null);
     setIsMemberOrder(false);
     setDeliveryFeeOverride(null);
-    setDiscountOverride(null);
+    setExtraDiscount('0');
     setTicketExtraCharges('0');
+    setTicketExtraChargesNote('');
+    setEditingOrderId(null);
+  };
+
+  const validateTicketForCheckout = () => {
+    if (ticketItems.length === 0) return false;
+    if (ticketOrderType === "Delivery" && !deliveryAddress.trim()) {
+      toast("Please enter a delivery address.", "error");
+      return false;
+    }
+    if (ticketOrderType === "Delivery" && deliverySettingsFull.deliveryChargeType === 'area' && !ticketSelectedArea) {
+      toast("Please select a delivery area.", "error");
+      return false;
+    }
+    return true;
   };
 
   // The waiter's order goes straight to the kitchen -- no payment method
   // decided yet (so no tax applied yet either). Both are decided later, when
   // the customer bill is first printed from the Orders section.
   const handleSendToKitchen = async () => {
-    if (ticketItems.length === 0) return;
-    if (ticketOrderType === "Delivery" && !deliveryAddress.trim()) {
-      toast("Please enter a delivery address.", "error");
-      return;
-    }
-    if (ticketOrderType === "Delivery" && deliverySettingsFull.deliveryChargeType === 'area' && !ticketSelectedArea) {
-      toast("Please select a delivery area.", "error");
-      return;
-    }
+    if (!validateTicketForCheckout()) return;
 
     try {
       const createdOrder = await db.createOrder({
@@ -506,6 +513,57 @@ function AppInner() {
     } catch (err) {
       console.error("Error sending ticket to kitchen:", err);
       toast(err.message || "Error saving ticket. Check backend connection.", "error");
+    }
+  };
+
+  // Reopens an existing (unpaid) order in the same ticket-builder + checkout
+  // screen used to create one -- items reconstructed from what was saved are
+  // shown as plain editable/removable lines (their original modifier picks
+  // aren't stored in a re-editable form); new items can still be added
+  // normally from the product grid behind the checkout screen.
+  const handleEditOrder = (order) => {
+    setTicketItems(order.items.map((item, i) => ({
+      ticketItemId: `edit-${order.id}-${i}-${Date.now()}`,
+      product: { id: item.productId, name: item.name },
+      size: null,
+      modifiers: [],
+      addons: [],
+      quantity: item.quantity,
+      itemPrice: item.unitPrice,
+      originalPrice: item.originalUnitPrice ?? item.unitPrice,
+      discountPercent: 0,
+      note: item.notes || "",
+    })));
+    setTicketOrderType(order.orderType || "Dine-in");
+    setDeliveryAddress(order.orderType === "Delivery" ? order.deliveryAddress || "" : "");
+    setCustomerName(order.customerName === "Walk-In Customer" ? "" : order.customerName || "");
+    setCustomerPhone(order.customerPhone === "N/A" ? "" : order.customerPhone || "");
+    setTableNumber(order.tableNumber || "");
+    setTicketSelectedArea(null);
+    setIsMemberOrder((order.memberDiscountAmount || 0) > 0);
+    setDeliveryFeeOverride(String(order.deliveryFee || 0));
+    setExtraDiscount(String((order.discountAmount || 0) - (order.memberDiscountAmount || 0)));
+    setTicketExtraCharges(String(order.extraCharges || 0));
+    setTicketExtraChargesNote(order.extraChargesNote || "");
+    setEditingOrderId(order.id);
+    setSelectedQueuedOrder(null);
+    setView("register");
+    setShowCheckoutModal(true);
+  };
+
+  const handleSaveEditedOrder = async () => {
+    if (!validateTicketForCheckout()) return;
+
+    try {
+      const updated = await db.updateOrderItems(editingOrderId, buildTicketOrderPayload());
+      setOrders((prev) => sortOrders(prev.map((o) => (o.id === updated.id ? updated : o))));
+      setSelectedQueuedOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
+      clearTicket();
+      setShowCheckoutModal(false);
+      toast("Order updated!");
+    } catch (err) {
+      console.error("Error saving edited order:", err);
+      toast(err.message || "Error saving changes.", "error");
     }
   };
 
@@ -742,7 +800,7 @@ function AppInner() {
                       onConfirm={handleConfirmOnlineOrder}
                       onUpdateStatus={handleUpdateStatus}
                       onMarkPaid={handleMarkOrderPaid}
-                      onEditOrder={setEditOrder}
+                      onEditOrder={handleEditOrder}
                     />
                   ) : (
                     <>
@@ -776,10 +834,13 @@ function AppInner() {
                           ticketSubtotal={ticketSubtotal}
                           ticketDeliveryFee={ticketDeliveryFee}
                           onChangeDeliveryFee={setDeliveryFeeOverride}
-                          ticketDiscountAmount={ticketDiscountAmount}
-                          onChangeDiscount={setDiscountOverride}
+                          memberDiscountAmount={memberDiscountAmount}
+                          extraDiscount={extraDiscount}
+                          onChangeExtraDiscount={setExtraDiscount}
                           ticketExtraCharges={ticketExtraCharges}
                           onChangeExtraCharges={setTicketExtraCharges}
+                          ticketExtraChargesNote={ticketExtraChargesNote}
+                          onChangeExtraChargesNote={setTicketExtraChargesNote}
                           ticketTotal={ticketTotal}
                           memberDiscountPercent={memberDiscountPercent}
                           isMemberOrder={isMemberOrder}
@@ -788,8 +849,9 @@ function AppInner() {
                           deliveryAreas={deliveryAreas}
                           selectedArea={ticketSelectedArea}
                           onSelectArea={setTicketSelectedArea}
+                          isEditing={!!editingOrderId}
                           onClose={() => setShowCheckoutModal(false)}
-                          onSendToKitchen={handleSendToKitchen}
+                          onSendToKitchen={editingOrderId ? handleSaveEditedOrder : handleSendToKitchen}
                         />
                       )}
                     </>
@@ -812,7 +874,7 @@ function AppInner() {
               onPrintBill={printBill}
               onPreviewBill={previewBill}
               onMarkPaid={handleMarkOrderPaid}
-              onEditOrder={setEditOrder}
+              onEditOrder={handleEditOrder}
             />
           )}
 
@@ -914,14 +976,6 @@ function AppInner() {
         </div>
       )}
 
-      {editOrder && (
-        <EditOrderModal
-          order={editOrder}
-          siteSettings={siteSettings}
-          onSave={handleSaveOrderEdits}
-          onClose={() => setEditOrder(null)}
-        />
-      )}
     </div>
   );
 }
